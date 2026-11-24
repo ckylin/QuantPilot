@@ -1,0 +1,53 @@
+# qlib 表达式算子白名单 —— 单一数据源。
+# 被 app/core/operators.py（Spec 校验）与 prompt_loader.py（注入 system prompt）共同加载。
+# 任何新增算子必须先在此登记，再同步更新 strategy-spec-schema.md §6。
+
+fields:
+  - $open
+  - $close
+  - $high
+  - $low
+  - $volume
+  - $vwap
+  - $amount
+  - $factor
+
+# 单目算子：Name(x[, n])
+unary:
+  - Ref
+  - Mean
+  - Sum
+  - Std
+  - Max
+  - Min
+  - Delta
+  - Rank
+  - TsRank
+  - Abs
+  - Log
+  - Sign
+
+# 双目算子：Name(x, y[, n])
+binary:
+  - Correlation
+  - Power
+
+# 算术运算符
+arithmetic:
+  - "+"
+  - "-"
+  - "*"
+  - "/"
+
+# 表达式中出现即拒绝的token（大小写不敏感，子串匹配）
+forbidden_tokens:
+  - import
+  - eval
+  - exec
+  - open
+  - __
+  - os
+  - sys
+  - subprocess
+  - socket
+  - requests

@@ -1,0 +1,67 @@
+# QuantPilot qlib 执行沙箱镜像（podman / docker 兼容）
+# 构建：podman build -f sandbox/Containerfile -t quantpilot/sandbox:0.1 sandbox/
+#
+# 国内网络：基础镜像默认走 docker.io，若拉取超时，用 --build-arg 指定镜像源：
+#   podman build --build-arg BASE_IMAGE=docker.m.daocloud.io/library/python:3.10-slim-bookworm \
+#     -f sandbox/Containerfile -t quantpilot/sandbox:0.1 sandbox/
+# bootstrap_windows.ps1 / run_acceptance.ps1 已自动处理。
+#
+# 安全基线：
+#  - 非 root 用户运行
+#  - 不安装网络工具、不缓存 pip 包
+#  - 数据在运行时以只读方式挂载到 /data/qlib（见 run_sandbox.sh）
+#  - 执行代码由服务端注入到 /work/solution.py，容器只读挂载该目录
+
+ARG BASE_IMAGE=python:3.10-slim-bookworm
+FROM ${BASE_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    QLIB_PROVIDER_URI=/data/qlib \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 最小编译依赖：pyqlib 的 numpy/pandas/lightgbm 依赖在有 wheel 时无需编译，
+# 保留 build-essential 以兼容无 wheel 的架构。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      libgomp1 \
+      curl \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# 锁定版本，保证生成代码所依赖的 qlib API 行为稳定。
+# Python 3.10 有 numpy<2 / pandas<2.2 的 wheel，无需源码编译。
+# lightgbm 是预测模型工作流（LGBModel）的依赖，必备。
+ARG PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+# EXTRA_MODEL_PKGS: 按需追加模型依赖（GBDT 三件套默认装；深度学习 torch 不默认装）。
+# 例：--build-arg "EXTRA_MODEL_PKGS=xgboost catboost"
+ARG EXTRA_MODEL_PKGS=""
+RUN pip install --no-cache-dir -i "${PIP_INDEX}" \
+      "numpy<2" \
+      "pandas<2.2" \
+      "scipy<1.14" \
+      "lightgbm>=4.0,<5" \
+      "xgboost>=2.0,<3" \
+      "catboost>=1.2,<2" \
+      "pyqlib==0.9.7" \
+      ${EXTRA_MODEL_PKGS}
+
+# 注意：不要 pip install qlib（PyPI 上该名字是另一个包）。必须 pyqlib。
+# 新增 GBDT 模型只需在 app/models/registry.py 注册声明；依赖已在本镜像内。
+# 深度学习模型（requires_gpu=true）需另建 GPU 镜像并传 EXTRA_MODEL_PKGS=torch。
+
+# 非 root 运行用户
+RUN useradd -m -u 10001 -s /bin/sh qpsandbox \
+ && mkdir -p /work /data/qlib \
+ && chown -R qpsandbox:qpsandbox /work
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh
+
+WORKDIR /work
+USER qpsandbox
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
